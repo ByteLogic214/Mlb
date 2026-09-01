@@ -1,0 +1,187 @@
+
+import os
+
+base_dir = "/mnt/agents/output/mlb-proyeccion-v2"
+
+# 1. Actualizar config.yaml para SharpAPI
+config_yaml = """# MLB Proyección v2.0 - Configuración Centralizada
+# Fecha: 2026-09-01
+# Fuente de cuotas: SharpAPI (agregador: FanDuel, DraftKings, Pinnacle)
+
+project:
+  name: "mlb-proyeccion-v2"
+  version: "2.1.0"
+  timezone: "America/New_York"
+  log_level: "INFO"
+
+# =============================================================================
+# CONFIGURACIÓN DE DATOS
+# =============================================================================
+data:
+  season: 2026
+  
+  # Split temporal estricto (Time-Series)
+  splits:
+    train_end: "2026-07-31"
+    val_start: "2026-08-01"
+    val_end: "2026-08-31"
+    test_start: "2026-09-01"
+  
+  # Fuentes de datos
+  sources:
+    statsapi:
+      enabled: true
+      base_url: "https://statsapi.mlb.com/api/v1"
+      rate_limit: 10
+    
+    odds:
+      # SharpAPI (agregador principal)
+      sharpapi:
+        enabled: true
+        api_key: "${SHARPAPI_KEY}"
+        base_url: "https://api.sharpapi.io/api/v1"
+        tier: "free"  # free | paid
+        data_delay_seconds: 60  # 60s en free, 0s en paid
+        books_available: ["draftkings", "fanduel"]
+        requests_per_minute: 12
+        pagination_limit: 50
+      
+      # Pinnacle directo (fallback si tienes cuenta API)
+      pinnacle:
+        enabled: false
+        api_key: "${PINNACLE_API_KEY}"
+        base_url: "https://api.pinnacle.com/v2"
+        sport_id: 246
+      
+      # The Odds API (fallback terciario)
+      fallback:
+        enabled: true
+        source: "the-odds-api"
+        api_key: "${ODDS_API_KEY}"
+  
+  paths:
+    raw: "data/raw"
+    processed: "data/processed"
+    features: "data/features"
+
+# =============================================================================
+# CONFIGURACIÓN DE MODELO (XGBoost Único)
+# =============================================================================
+model:
+  type: "xgboost"
+  
+  hyperparameters:
+    objective: "binary:logistic"
+    eval_metric: "logloss"
+    max_depth: 5
+    learning_rate: 0.05
+    n_estimators: 500
+    subsample: 0.8
+    colsample_bytree: 0.8
+    min_child_weight: 5
+    gamma: 0.1
+    reg_alpha: 0.1
+    reg_lambda: 1.0
+    early_stopping_rounds: 50
+  
+  feature_groups:
+    - "pitcher_metrics"
+    - "bullpen_metrics"
+    - "offense_metrics"
+    - "defense_metrics"
+    - "park_factors"
+    - "rest_days"
+    - "travel_distance"
+    - "recent_form"
+  
+  conformal:
+    method: "split_conformal"
+    alpha: 0.05
+    calibration_size: 0.2
+
+# =============================================================================
+# CONFIGURACIÓN DE EVALUACIÓN Y EJECUCIÓN
+# =============================================================================
+evaluation:
+  min_ev_threshold: 0.04
+  use_conservative_ev: true
+  min_coverage: 0.93
+  
+  # Mercados permitidos (filtrado estricto)
+  allowed_markets:
+    - "moneyline"                    # Full game ML
+    - "run_line"                     # Full game handicap
+    - "totals"                       # Full game O/U
+    - "1st_5_innings_moneyline"     # F5 ML (más predecible)
+    - "1st_5_innings_run_line"      # F5 handicap
+    - "1st_5_innings_total_runs"    # F5 totals
+  
+  # Mercados EXCLUIDOS explícitamente (alta varianza / baja liquidez)
+  excluded_markets:
+    - "1st_inning_*"               # Un inning es puro ruido
+    - "2nd_inning_*"
+    - "3rd_inning_*"
+    - "1st_3_innings_*"            # Muestra muy pequeña
+    - "1st_7_innings_*"            # Menos estándar que F5
+    - "*_player_prop"              # Props individuales
+    - "*_alternate_line"           # Líneas alternativas (vig alto)
+    - "*_live"                     # No apostar en vivo
+  
+  # Filtro de líneas alternativas
+  exclude_alternate_lines: true
+  exclude_if_not_main_line: true
+
+# =============================================================================
+# GESTIÓN DE BANKROLL
+# =============================================================================
+bankroll:
+  initial: 10000.0
+  currency: "USD"
+  
+  kelly:
+    fraction: 0.25
+    max_stake_percent: 0.02
+    min_stake: 10.0
+  
+  daily_limits:
+    max_risk_percent: 0.05
+    max_picks: 3
+    correlated_picks: "prohibit"
+  
+  stop_loss:
+    daily: 0.03
+    weekly: 0.08
+    monthly: 0.15
+
+# =============================================================================
+# REPORTES Y MONITOREO
+# =============================================================================
+reporting:
+  daily_report:
+    enabled: true
+    path: "reports/daily"
+    format: "json"
+    include_no_pick_days: true
+  
+  performance_report:
+    enabled: true
+    path: "reports/performance"
+    frequency: "weekly"
+    metrics:
+      - "roi"
+      - "clv"
+      - "sharp_ratio"
+      - "max_drawdown"
+      - "pick_rate"
+      - "ev_realized"
+  
+  alerts:
+    coverage_drop: true
+    consecutive_losses: 5
+    bankroll_drop: 0.10
+"""
+
+with open(os.path.join(base_dir, "config", "config.yaml"), "w") as f:
+    f.write(config_yaml)
+
+print("✅ config.yaml actualizado para SharpAPI")
